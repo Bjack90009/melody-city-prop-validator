@@ -162,6 +162,9 @@
     config.trial_performances_per_reward ??= 3;
     config.trial_rewards_per_performance ??= 1;
     config.trial_reward_choice_count ??= 3;
+    config.reward_unlock_option_chance ??= 0.5;
+    config.reward_unlock_count ??= 1;
+    config.reward_highest_quality_unlock_count ??= 2;
     validateConfig(config);
     const performanceRules = {
       spotlight_segments: 3,
@@ -218,7 +221,7 @@
         limitScope: String(row["限制范围"]),
         limitKey: String(row["限制键"]),
         limitCount: Number(row["限制数量"]),
-        base: levelArray(row, "基础人气Lv"),
+        base: levelArray(row, row["基础表演值Lv1"] !== undefined ? "基础表演值Lv" : "基础人气Lv"),
         effect: levelArray(row, "效果值Lv"),
         effectRule,
         effectDescription: String(row["效果描述"]),
@@ -230,7 +233,7 @@
     }
     if (items.size !== 60) throw new Error(`应读取60件道具，实际读取${items.size}件`);
 
-    const signature = [...items.values()].map((item) => `${item.id}:${item.base.join("-")}:${item.effect.join("-")}`).join("|");
+    const signature = [...items.values()].map((item) => `${item.id}:${item.base.join("-")}:${item.effect.join("-")}:${JSON.stringify(item.effectRule)}`).join("|");
     state.config = config;
     state.qualities = qualities;
     state.items = items;
@@ -271,9 +274,9 @@
 
   function validateConfig(config) {
     const integerKeys = [
-      "backpack_rows", "backpack_cols", "initial_rows", "initial_cols", "performances_per_expand",
+      "backpack_rows", "backpack_cols", "initial_rows", "initial_cols",
       "stamina_per_performance", "initial_item_level", "max_item_level", "test_initial_copies_each",
-      "trial_initial_purple_count", "trial_initial_blue_count", "trial_performances_per_reward", "trial_rewards_per_performance", "trial_reward_choice_count", "max_log_entries",
+      "trial_initial_purple_count", "trial_initial_blue_count", "trial_performances_per_reward", "trial_rewards_per_performance", "trial_reward_choice_count", "reward_unlock_count", "reward_highest_quality_unlock_count", "max_log_entries",
     ];
     for (const key of integerKeys) {
       if (!Number.isInteger(Number(config[key])) || Number(config[key]) < 1) throw new Error(`规则 ${key} 必须是正整数`);
@@ -281,6 +284,7 @@
     if (config.backpack_rows > 8 || config.backpack_cols > 8) throw new Error("背包最大尺寸不能超过8×8");
     if (config.initial_rows > config.backpack_rows || config.initial_cols > config.backpack_cols) throw new Error("初始可用区域不能超过背包尺寸");
     if (config.max_item_level > 5) throw new Error("当前道具数据只提供到Lv.5");
+    if (!Number.isFinite(Number(config.reward_unlock_option_chance)) || Number(config.reward_unlock_option_chance) < 0 || Number(config.reward_unlock_option_chance) > 1) throw new Error("规则 reward_unlock_option_chance 必须为0—1之间的小数");
   }
 
   function initializeFreshState(mode = state.mode) {
@@ -397,14 +401,13 @@
       state.runSeed = String(payload.runSeed || simpleHash(`${state.configSignature}:${mode}:${Date.now()}`));
       state.lastEventId = payload.lastEventId || null;
       const pending = payload.pendingRewardChoice;
-      state.pendingRewardChoice = pending && Array.isArray(pending.candidateIds)
-        ? {
-            candidateIds: pending.candidateIds.filter((id) => state.items.has(id) && !state.discovered.has(id)).slice(0, state.config.trial_reward_choice_count),
-            selectedId: state.items.has(pending.selectedId) && !state.discovered.has(pending.selectedId) ? pending.selectedId : null,
-            performanceNumber: Number(pending.performanceNumber) || state.performances,
-          }
-        : null;
-      if (state.pendingRewardChoice && !state.pendingRewardChoice.candidateIds.length) state.pendingRewardChoice = null;
+      const validOptions = Array.isArray(pending?.options) ? pending.options.filter((option) => option?.type === "unlock" || (option?.type === "item" && state.items.has(option.itemId) && !state.discovered.has(option.itemId))) : [];
+      state.pendingRewardChoice = validOptions.length ? {
+        options: validOptions.slice(0, state.config.trial_reward_choice_count),
+        candidateIds: validOptions.filter((option) => option.type === "item").map((option) => option.itemId),
+        selectedKey: validOptions.some((option) => option.key === pending.selectedKey) ? pending.selectedKey : null,
+        performanceNumber: Number(pending.performanceNumber) || state.performances,
+      } : null;
       state.performanceRunning = false;
       state.selectedInventoryId = null;
       state.selectedPlacedId = null;
@@ -437,8 +440,7 @@
   function populateFilters() {
     els.qualityFilter.innerHTML = '<option value="">全部品质</option>';
     [...state.qualities.values()].sort((a, b) => b.order - a.order).forEach((quality) => els.qualityFilter.add(new Option(quality.name, quality.name)));
-    els.categoryFilter.innerHTML = '<option value="">全部种类</option>';
-    [...new Set([...state.items.values()].map((item) => item.category))].forEach((category) => els.categoryFilter.add(new Option(category, category)));
+    els.categoryFilter.innerHTML = '<option value="">内部种类不参与筛选</option>';
   }
 
   function renderAll() {
@@ -457,7 +459,7 @@
     els.undoButton.disabled = !state.history.length;
     els.redoButton.disabled = !state.future.length;
     els.warehouseHint.textContent = state.mode === "trial"
-      ? `拖入背包完成配置；每 ${state.config.trial_performances_per_reward} 次表演解锁新道具。`
+      ? `拖入背包完成配置；每 ${state.config.trial_performances_per_reward} 次表演进入一次三选一奖励。`
       : "拖入背包验证Build；测试模式支持等级和复制。";
   }
 
@@ -469,14 +471,14 @@
     els.performanceCount.textContent = state.performances;
     els.discoveredCount.textContent = state.discovered.size;
 
-    const every = state.config.performances_per_expand;
-    const progress = state.performances % every;
     if (state.expansionTokens > 0) {
       els.expandMessage.textContent = `可扩充 ${state.expansionTokens} 格：点击金色虚线格`;
       els.expandProgress.style.width = "100%";
     } else {
+      const every = state.config.trial_performances_per_reward;
+      const progress = state.performances % every;
       const remaining = every - progress;
-      els.expandMessage.textContent = `再表演 ${remaining} 次可扩充 1 格`;
+      els.expandMessage.textContent = `再表演 ${remaining} 次进入奖励选择`;
       els.expandProgress.style.width = `${(progress / every) * 100}%`;
     }
     els.gridSizeLabel.textContent = `${state.config.backpack_rows}×${state.config.backpack_cols}`;
@@ -603,7 +605,6 @@
   function renderInventory() {
     const search = els.searchInput.value.trim().toLowerCase();
     const quality = els.qualityFilter.value;
-    const category = els.categoryFilter.value;
     const sorted = [...state.inventory].sort((a, b) => {
       const itemA = state.items.get(a.itemId);
       const itemB = state.items.get(b.itemId);
@@ -611,7 +612,7 @@
     });
     const filtered = sorted.filter((instance) => {
       const item = state.items.get(instance.itemId);
-      return (!search || `${item.id} ${item.name} ${item.tag1} ${item.tag2}`.toLowerCase().includes(search)) && (!quality || item.quality === quality) && (!category || item.category === category);
+      return (!search || `${item.id} ${item.name} ${item.tag1} ${item.tag2}`.toLowerCase().includes(search)) && (!quality || item.quality === quality);
     });
     els.warehouseCount.textContent = state.inventory.length;
     els.inventoryList.innerHTML = "";
@@ -625,7 +626,7 @@
       const row = document.createElement("div");
       row.className = "inventory-row";
       row.style.setProperty("--quality-color", qualityInfo.color);
-      row.innerHTML = `<span class="inventory-quality"></span>${itemIcon(item, "warehouse")}<div class="inventory-copy"><strong>${escapeHtml(item.name)}</strong><small>${item.id} · ${item.category} · ${item.tag1}</small></div><div class="inventory-meta"><b>${item.quality}</b><span>Lv.${instance.level}</span></div>`;
+      row.innerHTML = `<span class="inventory-quality"></span>${itemIcon(item, "warehouse")}<div class="inventory-copy"><strong>${escapeHtml(item.name)}</strong><small>${item.id} · ${item.tag1} / ${item.tag2}</small></div><div class="inventory-meta"><b>${item.quality}</b><span class="inventory-level-shape">${shapePreview(item, "compact")}<span>Lv.${instance.level}</span></span></div>`;
       row.addEventListener("pointerdown", (event) => beginPointerGesture(event, "warehouse", instance.instanceId, row));
       els.inventoryList.appendChild(row);
     }
@@ -701,6 +702,7 @@
     drag.candidate = null;
     drag.preview.hidden = !overGrid;
     drag.ghost.classList.remove("valid", "invalid", "swap");
+    updateEffectTargetHints(item.effectRule, drag.instanceId, overGrid);
     if (!overGrid) {
       drag.ghost.classList.add(overWarehouse && drag.source === "backpack" ? "valid" : "invalid");
       drag.candidate = overWarehouse && drag.source === "backpack" ? { target: "warehouse" } : null;
@@ -757,9 +759,30 @@
     drag.ghost?.remove();
     drag.preview?.remove();
     els.warehouseDropZone.classList.remove("drop-active");
+    updateEffectTargetHints(null, null, false);
     document.body.classList.remove("is-dragging");
     document.removeEventListener("pointermove", continuePointerGesture);
     state.drag = null;
+  }
+
+  function updateEffectTargetHints(rule, sourceInstanceId, visible) {
+    for (const block of els.backpackGrid.querySelectorAll(".placed-item.effect-target-hint")) block.classList.remove("effect-target-hint");
+    if (!visible || !rule) return;
+    const filters = [];
+    if (rule.type === "targetBuff" && rule.filter) filters.push(rule.filter);
+    if (rule.type === "count" && rule.filter) filters.push(rule.filter);
+    if (rule.type === "condition") filters.push(...rule.clauses.map((entry) => entry.filter).filter(Boolean));
+    if (rule.type === "balance") filters.push(rule.a?.filter, rule.b?.filter);
+    if (rule.type === "groupBuff") {
+      filters.push(...rule.clauses.map((entry) => entry.filter).filter(Boolean));
+      if (rule.recipients?.filter) filters.push(rule.recipients.filter);
+    }
+    for (const placed of state.placed) {
+      if (placed.instanceId === sourceInstanceId) continue;
+      const item = state.items.get(placed.itemId);
+      if (!filters.some((filter) => filter && matchesFilter(item, filter))) continue;
+      els.backpackGrid.querySelector(`[data-instance-id="${placed.instanceId}"]`)?.classList.add("effect-target-hint");
+    }
   }
 
   function autoPlaceFromWarehouse(instanceId) {
@@ -786,12 +809,12 @@
     }
     const item = state.items.get(instance.itemId);
     const quality = state.qualities.get(item.quality);
-    const breakdown = state.preview.breakdown.get(instance.instanceId) || { base: item.base[instance.level - 1], ownEffect: 0, received: 0, total: item.base[instance.level - 1], active: false, matches: 0 };
+    const breakdown = state.preview.breakdown.get(instance.instanceId) || { base: item.base[instance.level - 1], ownAbsolute: 0, receivedAbsolute: 0, ownPercent: 0, receivedPercent: 0, total: item.base[instance.level - 1], active: false, matches: 0 };
     els.itemDetail.style.setProperty("--quality-color", quality.color);
     els.itemDetail.innerHTML = `
       <div class="detail-hero">
         ${itemIcon(item, "detail")}
-        <div><h2 class="detail-title">${escapeHtml(item.name)}</h2><p class="detail-id">${item.id} · ${item.quality} · ${item.category}</p></div>
+        <div><h2 class="detail-title">${escapeHtml(item.name)}</h2><p class="detail-id">${item.id} · ${item.quality} · ${escapeHtml(item.tag1)} / ${escapeHtml(item.tag2)}</p></div>
       </div>
       <div class="detail-facts">
         <div class="detail-fact"><span>标签</span><strong>${escapeHtml(item.tag1)} / ${escapeHtml(item.tag2)}</strong></div>
@@ -801,8 +824,8 @@
       </div>
       ${state.mode === "test" ? `<div class="level-row"><span>测试等级</span><select id="detailLevelSelect">${[1, 2, 3, 4, 5].map((level) => `<option value="${level}"${level === instance.level ? " selected" : ""}>Lv.${level}</option>`).join("")}</select></div>` : `<div class="level-row"><span>当前等级</span><strong>Lv.${instance.level}</strong></div>`}
       <div class="detail-facts">
-        <div class="detail-fact"><span>基础人气</span><strong>${formatNumber(item.base[instance.level - 1])}</strong></div>
-        <div class="detail-fact"><span>效果值</span><strong>${formatNumber(item.effect[instance.level - 1])}</strong></div>
+        <div class="detail-fact"><span>基础表演值</span><strong>${formatNumber(item.base[instance.level - 1])}</strong></div>
+        <div class="detail-fact"><span>效果值</span><strong>${formatEffectValue(item, instance.level)}</strong></div>
       </div>
       <div class="effect-box">${escapeHtml(item.effectDescription)}<div class="effect-state">${placedInstance ? effectStatusText(breakdown) : "放入背包后显示实时触发结果"}</div></div>
       <div class="detail-actions">
@@ -829,8 +852,10 @@
   function effectStatusText(breakdown) {
     const parts = [breakdown.active ? "效果已触发" : "效果未触发"];
     if (breakdown.matches > 0) parts.push(`计数 ${breakdown.matches}`);
-    if (breakdown.ownEffect > 0) parts.push(`自身效果 +${breakdown.ownEffect}`);
-    if (breakdown.received > 0) parts.push(`受到加成 +${breakdown.received}`);
+    if (breakdown.ownAbsolute > 0) parts.push(`自身固定值 +${formatNumber(breakdown.ownAbsolute)}`);
+    if (breakdown.receivedAbsolute > 0) parts.push(`获得固定值 +${formatNumber(breakdown.receivedAbsolute)}`);
+    if (breakdown.ownPercent > 0) parts.push(`自身比例 +${formatNumber(breakdown.ownPercent)}%`);
+    if (breakdown.receivedPercent > 0) parts.push(`获得比例 +${formatNumber(breakdown.receivedPercent)}%`);
     return parts.join(" · ");
   }
 
@@ -894,7 +919,6 @@
     state.performances += 1;
     state.totalStamina += stamina;
     state.totalScore += score;
-    if (state.performances % state.config.performances_per_expand === 0) state.expansionTokens += 1;
     const rewardDue = state.mode === "trial" && state.performances % state.config.trial_performances_per_reward === 0;
     const rewardChoice = rewardDue ? createPendingRewardChoice(PerformanceSimulation.rngFromSeed(`${plan.seed}:reward`)) : null;
     state.pendingRewardChoice = rewardChoice;
@@ -929,13 +953,29 @@
 
   function createPendingRewardChoice(rng = Math.random) {
     const pool = [...state.items.values()].filter((item) => !state.discovered.has(item.id));
+    const itemCount = Math.min(pool.length, state.config.trial_reward_choice_count - 1);
     const candidateIds = [];
-    while (pool.length && candidateIds.length < state.config.trial_reward_choice_count) {
+    while (pool.length && candidateIds.length < itemCount) {
       const item = weightedRandomItem(pool, rng);
       candidateIds.push(item.id);
       pool.splice(pool.findIndex((candidate) => candidate.id === item.id), 1);
     }
-    return candidateIds.length ? { candidateIds, selectedId: null, performanceNumber: state.performances } : null;
+    if (!candidateIds.length && state.unlocked.size >= state.config.backpack_rows * state.config.backpack_cols) return null;
+    const highestOrder = Math.max(...candidateIds.map((itemId) => state.qualities.get(state.items.get(itemId).quality).order), 0);
+    const globalHighestOrder = Math.max(...[...state.qualities.values()].map((quality) => quality.order));
+    const unlockCount = highestOrder === globalHighestOrder ? state.config.reward_highest_quality_unlock_count : state.config.reward_unlock_count;
+    const canOfferUnlock = state.unlocked.size < state.config.backpack_rows * state.config.backpack_cols && rng() < state.config.reward_unlock_option_chance;
+    const options = [
+      ...(canOfferUnlock ? [{ type: "unlock", key: "__unlock__", unlockCount }] : []),
+      ...candidateIds.map((itemId) => ({ type: "item", key: itemId, itemId })),
+    ];
+    while (pool.length && options.length < state.config.trial_reward_choice_count) {
+      const item = weightedRandomItem(pool, rng);
+      options.push({ type: "item", key: item.id, itemId: item.id });
+      candidateIds.push(item.id);
+      pool.splice(pool.findIndex((candidate) => candidate.id === item.id), 1);
+    }
+    return options.length ? { options, candidateIds, selectedKey: null, performanceNumber: state.performances } : null;
   }
 
   function weightedRandomItem(items, rng = Math.random) {
@@ -961,8 +1001,8 @@
       const allUnlocked = state.discovered.size >= state.items.size;
       const remaining = state.config.trial_performances_per_reward - (state.performances % state.config.trial_performances_per_reward);
       els.performanceRewards.innerHTML = rewardChoice
-        ? `<p class="reward-complete">本场可从 ${rewardChoice.candidateIds.length} 件候选道具中选择 1 件</p>`
-        : `<p class="reward-complete">${allUnlocked ? "60件道具已全部解锁" : `再表演 ${remaining} 次解锁新道具`}</p>`;
+        ? `<p class="reward-complete">本场可从 ${rewardChoice.options.length} 个奖励中选择 1 个</p>`
+        : `<p class="reward-complete">${allUnlocked ? "60件道具已全部解锁" : `再表演 ${remaining} 次进入奖励选择`}</p>`;
     } else {
       els.performanceRewards.innerHTML = '<p class="reward-complete">测试模式不改变道具库存</p>';
     }
@@ -978,34 +1018,54 @@
   function renderRewardChoice() {
     const pending = state.pendingRewardChoice;
     if (!pending) return;
-    els.rewardChoiceList.innerHTML = pending.candidateIds.map((itemId) => {
-      const item = state.items.get(itemId);
+    els.rewardChoiceList.innerHTML = pending.options.map((option) => {
+      if (option.type === "unlock") {
+        const selected = pending.selectedKey === option.key;
+        return `<button type="button" class="reward-choice-card reward-choice-unlock${selected ? " selected" : ""}" data-reward-key="${option.key}" role="radio" aria-checked="${selected}" style="--quality-color:#D3A94E">
+          <span class="reward-unlock-icon" aria-hidden="true">＋</span>
+          <span class="reward-choice-card-title"><strong>选择解锁${option.unlockCount}个格子</strong><span>背包扩充</span></span>
+          <span class="reward-choice-effect">确认后获得 ${option.unlockCount} 次相邻格解锁机会，可在背包中逐格选择。</span>
+        </button>`;
+      }
+      const item = state.items.get(option.itemId);
       const quality = state.qualities.get(item.quality);
-      const selected = pending.selectedId === item.id;
-      return `<button type="button" class="reward-choice-card${selected ? " selected" : ""}" data-reward-item-id="${item.id}" role="radio" aria-checked="${selected}" style="--quality-color:${quality.color}">
-        <span class="reward-choice-card-head">${itemIcon(item, "reward")}<span class="reward-choice-card-title"><strong>${escapeHtml(item.name)}</strong><span>${item.id} · ${item.quality} · ${escapeHtml(item.category)}</span></span></span>
+      const selected = pending.selectedKey === item.id;
+      return `<button type="button" class="reward-choice-card${selected ? " selected" : ""}" data-reward-key="${item.id}" role="radio" aria-checked="${selected}" style="--quality-color:${quality.color}">
+        <span class="reward-choice-card-head">${itemIcon(item, "reward")}<span class="reward-choice-card-title"><strong>${escapeHtml(item.name)}</strong><span>${item.id} · ${item.quality} · ${escapeHtml(item.tag1)} / ${escapeHtml(item.tag2)}</span></span></span>
         <span class="reward-choice-card-facts"><span><span>系列标签</span><strong>${escapeHtml(item.tag1)} / ${escapeHtml(item.tag2)}</strong></span><span><span>占格与限制</span><strong>${item.width}×${item.height} · ${item.area}格<br>${escapeHtml(item.limitText)}</strong></span></span>
-        <span class="reward-choice-levels"><span>基础人气 Lv.1—Lv.5</span><strong>${item.base.map(formatNumber).join(" / ")}</strong></span>
-        <span class="reward-choice-levels"><span>效果值 Lv.1—Lv.5</span><strong>${item.effect.map(formatNumber).join(" / ")}</strong></span>
+        <span class="reward-choice-levels"><span>基础表演值 Lv.1—Lv.5</span><strong>${item.base.map(formatNumber).join(" / ")}</strong></span>
+        <span class="reward-choice-levels"><span>效果值 Lv.1—Lv.5</span><strong>${item.effect.map((_, index) => formatEffectValue(item, index + 1)).join(" / ")}</strong></span>
         <span class="reward-choice-effect">${escapeHtml(item.effectDescription)}</span>
       </button>`;
     }).join("");
-    for (const card of els.rewardChoiceList.querySelectorAll("[data-reward-item-id]")) {
+    for (const card of els.rewardChoiceList.querySelectorAll("[data-reward-key]")) {
       card.addEventListener("click", () => {
-        state.pendingRewardChoice.selectedId = card.dataset.rewardItemId;
+        state.pendingRewardChoice.selectedKey = card.dataset.rewardKey;
         persistState();
         renderRewardChoice();
       });
     }
-    const selectedItem = pending.selectedId ? state.items.get(pending.selectedId) : null;
-    els.rewardChoiceHint.textContent = selectedItem ? `已选择：${selectedItem.name}` : "请选择 1 件道具";
-    els.confirmRewardChoiceButton.disabled = !selectedItem;
+    const selectedOption = pending.options.find((option) => option.key === pending.selectedKey);
+    const selectedItem = selectedOption?.type === "item" ? state.items.get(selectedOption.itemId) : null;
+    els.rewardChoiceHint.textContent = selectedOption ? `已选择：${selectedItem?.name || `解锁${selectedOption.unlockCount}个格子`}` : "请选择 1 个奖励";
+    els.confirmRewardChoiceButton.disabled = !selectedOption;
   }
 
   function confirmRewardChoice() {
     const pending = state.pendingRewardChoice;
-    const item = pending?.selectedId ? state.items.get(pending.selectedId) : null;
-    if (!pending || !item) return;
+    const selectedOption = pending?.options.find((option) => option.key === pending.selectedKey);
+    if (!pending || !selectedOption) return;
+    if (selectedOption.type === "unlock") {
+      state.expansionTokens += selectedOption.unlockCount;
+      const rewardLog = state.logs.find((log) => log.number === pending.performanceNumber);
+      if (rewardLog) rewardLog.rewards = `解锁${selectedOption.unlockCount}格`;
+      state.pendingRewardChoice = null;
+      els.rewardChoiceDialog.close();
+      renderAll();
+      showToast(`已获得 ${selectedOption.unlockCount} 次扩格机会，请点击金色虚线格`, "success", 5000);
+      return;
+    }
+    const item = state.items.get(selectedOption.itemId);
     const instance = makeInstance(item.id, state.config.initial_item_level);
     state.discovered.add(item.id);
     state.inventory.push(instance);
@@ -1145,8 +1205,10 @@
     for (const placed of state.placed) {
       const item = state.items.get(placed.itemId);
       const base = item.base[placed.level - 1];
-      breakdown.set(placed.instanceId, { base, ownEffect: 0, received: 0, total: base, active: false, matches: 0 });
+      breakdown.set(placed.instanceId, { base, ownAbsolute: 0, receivedAbsolute: 0, ownPercent: 0, receivedPercent: 0, total: base, active: false, matches: 0 });
     }
+    const addOwn = (info, mode, value) => { if (mode === "percent") info.ownPercent += value; else info.ownAbsolute += value; };
+    const addReceived = (info, mode, value) => { if (mode === "percent") info.receivedPercent += value; else info.receivedAbsolute += value; };
     for (const source of state.placed) {
       const item = state.items.get(source.itemId);
       const value = item.effect[source.level - 1];
@@ -1156,20 +1218,25 @@
         const matches = Math.min(countForRule(source, rule), rule.cap ?? Infinity);
         info.matches = matches;
         info.active = matches > 0;
-        info.ownEffect += matches * value;
+        addOwn(info, rule.valueMode, matches * value);
       } else if (rule.type === "condition") {
         const clauseCounts = rule.clauses.map((entry) => countForRule(source, entry));
         const active = rule.clauses.every((entry, index) => (entry.min == null || clauseCounts[index] >= entry.min) && (entry.max == null || clauseCounts[index] <= entry.max));
         info.matches = clauseCounts.reduce((sum, countValue) => sum + countValue, 0);
         info.active = active;
-        if (active) info.ownEffect += value;
+        if (active) addOwn(info, rule.valueMode, value);
       } else if (rule.type === "balance") {
         const countA = Math.min(countForRule(source, { ...rule.a, excludeSource: rule.excludeSource }), rule.capEach ?? Infinity);
         const countB = Math.min(countForRule(source, { ...rule.b, excludeSource: rule.excludeSource }), rule.capEach ?? Infinity);
         const active = countA >= rule.minEach && countB >= rule.minEach && Math.abs(countA - countB) <= rule.maxDiff;
         info.matches = countA + countB;
         info.active = active;
-        if (active) info.ownEffect += value;
+        if (active) addOwn(info, rule.valueMode, value);
+      } else if (rule.type === "targetBuff") {
+        const recipients = targetsForRule(source, rule).slice(0, rule.cap ?? Infinity);
+        info.matches = recipients.length;
+        info.active = recipients.length > 0;
+        for (const recipient of recipients) addReceived(breakdown.get(recipient.instanceId), rule.valueMode, value);
       } else if (rule.type === "groupBuff") {
         const active = rule.clauses.every((entry) => {
           const result = countForRule(source, entry);
@@ -1177,25 +1244,27 @@
         });
         info.active = active;
         if (active) {
-          const recipients = state.placed.filter((target) => {
-            if (!rule.recipients.includeSource && target.instanceId === source.instanceId) return false;
-            return matchesFilter(state.items.get(target.itemId), rule.recipients.filter);
-          }).slice(0, rule.recipients.cap ?? Infinity);
+          const recipients = targetsForRule(source, { ...rule.recipients, excludeSource: !rule.recipients.includeSource }).slice(0, rule.recipients.cap ?? Infinity);
           info.matches = recipients.length;
-          for (const recipient of recipients) breakdown.get(recipient.instanceId).received += value;
+          for (const recipient of recipients) addReceived(breakdown.get(recipient.instanceId), rule.valueMode, value);
         }
       }
     }
     let total = 0;
     for (const info of breakdown.values()) {
-      info.total = info.base + info.ownEffect + info.received;
+      const fixedValue = info.base + info.ownAbsolute + info.receivedAbsolute;
+      info.total = Math.round(fixedValue * (1 + (info.ownPercent + info.receivedPercent) / 100));
       total += info.total;
     }
     return { total: Math.round(total), breakdown };
   }
 
   function countForRule(source, rule) {
-    const candidates = state.placed.filter((target) => {
+    return Math.min(targetsForRule(source, rule).length, rule.cap ?? Infinity);
+  }
+
+  function targetsForRule(source, rule) {
+    return state.placed.filter((target) => {
       if ((rule.excludeSource ?? true) && target.instanceId === source.instanceId) return false;
       const item = state.items.get(target.itemId);
       if (!matchesFilter(item, rule.filter || { any: true })) return false;
@@ -1204,12 +1273,10 @@
       if (rule.scope === "direction") return (rule.directions || []).includes(directionOf(placementRect(source), placementRect(target)));
       return true;
     });
-    return Math.min(candidates.length, rule.cap ?? Infinity);
   }
 
   function matchesFilter(item, filter = {}) {
     if (filter.any) return true;
-    if (filter.category && !filter.category.includes(item.category)) return false;
     if (filter.tag1 && !filter.tag1.includes(item.tag1)) return false;
     if (filter.tag2 && !filter.tag2.includes(item.tag2)) return false;
     if (filter.name && !filter.name.includes(item.name)) return false;
@@ -1312,6 +1379,7 @@
   function cellKeySort(a, b) { const [ar, ac] = a.split(",").map(Number); const [br, bc] = b.split(",").map(Number); return ar - br || ac - bc; }
   function clamp(value, min, max) { return Math.min(max, Math.max(min, value)); }
   function formatNumber(value) { return new Intl.NumberFormat("zh-CN", { maximumFractionDigits: 0 }).format(value || 0); }
+  function formatEffectValue(item, level) { return `${formatNumber(item.effect[level - 1])}${item.effectRule?.valueMode === "percent" ? "%" : ""}`; }
   function signedNumber(value) { const number = Math.round(Number(value) || 0); return number > 0 ? `+${formatNumber(number)}` : formatNumber(number); }
   function itemIcon(item, size = "warehouse") {
     const id = escapeHtml(item.id);

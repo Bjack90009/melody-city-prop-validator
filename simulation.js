@@ -68,6 +68,8 @@
         itemId: item.id,
         itemName: item.name,
         category: item.category,
+        tag1: item.tag1,
+        tag2: item.tag2,
         quality: item.quality,
         contribution,
         outcomeId: outcome.id,
