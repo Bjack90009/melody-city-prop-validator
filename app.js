@@ -3,6 +3,7 @@
 
   const DEFAULT_WORKBOOK = "data/爱乐之城-表演道具验证配置.xlsx";
   const STORAGE_PREFIX = "love-city-performance-prop-validator-v3";
+  const ICON_ASSET_VERSION = "2026-08-14-cartoon-v1";
 
   const els = {};
   const state = {
@@ -526,7 +527,7 @@
       block.style.width = `calc(${(item.width / cols) * 100}% - ${gap + 2}px)`;
       block.style.height = `calc(${(item.height / rows) * 100}% - ${gap + 2}px)`;
       block.dataset.instanceId = placed.instanceId;
-      block.innerHTML = `<strong class="placed-item-name" title="${escapeHtml(item.name)}">${escapeHtml(item.name)}</strong><span class="score-mark${effectActive ? " effect-active" : ""}" aria-label="表演值 ${formatNumber(itemBreakdown?.total || 0)}，效果${effectActive ? "已激活" : "未激活"}">${formatNumber(itemBreakdown?.total || 0)}</span><small class="placed-item-level">Lv.${placed.level}</small>`;
+      block.innerHTML = `${itemIcon(item, "placed")}<strong class="placed-item-name" title="${escapeHtml(item.name)}">${escapeHtml(item.name)}</strong><span class="score-mark${effectActive ? " effect-active" : ""}" aria-label="表演值 ${formatNumber(itemBreakdown?.total || 0)}，效果${effectActive ? "已激活" : "未激活"}">${formatNumber(itemBreakdown?.total || 0)}</span><small class="placed-item-level">Lv.${placed.level}</small>`;
       block.addEventListener("pointerdown", (event) => beginPointerGesture(event, "backpack", placed.instanceId, block));
       els.backpackGrid.appendChild(block);
     }
@@ -624,7 +625,7 @@
       const row = document.createElement("div");
       row.className = "inventory-row";
       row.style.setProperty("--quality-color", qualityInfo.color);
-      row.innerHTML = `<span class="inventory-quality"></span><span class="inventory-shape">${shapePreview(item, "warehouse")}</span><div class="inventory-copy"><strong>${escapeHtml(item.name)}</strong><small>${item.id} · ${item.category} · ${item.tag1}</small></div><div class="inventory-meta"><b>${item.quality}</b><span>Lv.${instance.level}</span></div>`;
+      row.innerHTML = `<span class="inventory-quality"></span>${itemIcon(item, "warehouse")}<div class="inventory-copy"><strong>${escapeHtml(item.name)}</strong><small>${item.id} · ${item.category} · ${item.tag1}</small></div><div class="inventory-meta"><b>${item.quality}</b><span>Lv.${instance.level}</span></div>`;
       row.addEventListener("pointerdown", (event) => beginPointerGesture(event, "warehouse", instance.instanceId, row));
       els.inventoryList.appendChild(row);
     }
@@ -670,7 +671,7 @@
     const ghost = document.createElement("div");
     ghost.className = "drag-ghost";
     ghost.style.setProperty("--quality-color", quality.color);
-    ghost.innerHTML = `<strong>${escapeHtml(item.name)}</strong>${shapePreview(item, "compact")}`;
+    ghost.innerHTML = `${itemIcon(item, "drag")}<strong>${escapeHtml(item.name)}</strong>`;
     document.body.appendChild(ghost);
     drag.ghost = ghost;
     const preview = document.createElement("div");
@@ -788,8 +789,10 @@
     const breakdown = state.preview.breakdown.get(instance.instanceId) || { base: item.base[instance.level - 1], ownEffect: 0, received: 0, total: item.base[instance.level - 1], active: false, matches: 0 };
     els.itemDetail.style.setProperty("--quality-color", quality.color);
     els.itemDetail.innerHTML = `
-      <h2 class="detail-title">${escapeHtml(item.name)}</h2>
-      <p class="detail-id">${item.id} · ${item.quality} · ${item.category}</p>
+      <div class="detail-hero">
+        ${itemIcon(item, "detail")}
+        <div><h2 class="detail-title">${escapeHtml(item.name)}</h2><p class="detail-id">${item.id} · ${item.quality} · ${item.category}</p></div>
+      </div>
       <div class="detail-facts">
         <div class="detail-fact"><span>标签</span><strong>${escapeHtml(item.tag1)} / ${escapeHtml(item.tag2)}</strong></div>
         <div class="detail-fact"><span>固定形状</span><strong class="detail-shape-value">${shapePreview(item, "detail")}<em>${item.area} 格</em></strong></div>
@@ -980,7 +983,7 @@
       const quality = state.qualities.get(item.quality);
       const selected = pending.selectedId === item.id;
       return `<button type="button" class="reward-choice-card${selected ? " selected" : ""}" data-reward-item-id="${item.id}" role="radio" aria-checked="${selected}" style="--quality-color:${quality.color}">
-        <span class="reward-choice-card-head">${shapePreview(item, "detail")}<span class="reward-choice-card-title"><strong>${escapeHtml(item.name)}</strong><span>${item.id} · ${item.quality} · ${escapeHtml(item.category)}</span></span></span>
+        <span class="reward-choice-card-head">${itemIcon(item, "reward")}<span class="reward-choice-card-title"><strong>${escapeHtml(item.name)}</strong><span>${item.id} · ${item.quality} · ${escapeHtml(item.category)}</span></span></span>
         <span class="reward-choice-card-facts"><span><span>系列标签</span><strong>${escapeHtml(item.tag1)} / ${escapeHtml(item.tag2)}</strong></span><span><span>占格与限制</span><strong>${item.width}×${item.height} · ${item.area}格<br>${escapeHtml(item.limitText)}</strong></span></span>
         <span class="reward-choice-levels"><span>基础人气 Lv.1—Lv.5</span><strong>${item.base.map(formatNumber).join(" / ")}</strong></span>
         <span class="reward-choice-levels"><span>效果值 Lv.1—Lv.5</span><strong>${item.effect.map(formatNumber).join(" / ")}</strong></span>
@@ -1310,6 +1313,12 @@
   function clamp(value, min, max) { return Math.min(max, Math.max(min, value)); }
   function formatNumber(value) { return new Intl.NumberFormat("zh-CN", { maximumFractionDigits: 0 }).format(value || 0); }
   function signedNumber(value) { const number = Math.round(Number(value) || 0); return number > 0 ? `+${formatNumber(number)}` : formatNumber(number); }
+  function itemIcon(item, size = "warehouse") {
+    const id = escapeHtml(item.id);
+    const name = escapeHtml(item.name);
+    const src = `assets/item-icons/${encodeURIComponent(item.id)}.webp?v=${ICON_ASSET_VERSION}`;
+    return `<span class="item-icon item-icon-${size}" style="--item-width:${item.width};--item-height:${item.height};--quality-color:${state.qualities.get(item.quality)?.color || "#d7b766"}" role="img" aria-label="${name}图标"><img src="${src}" alt="" draggable="false" decoding="async"${size === "placed" ? "" : ' loading="lazy"'} data-item-icon-id="${id}"></span>`;
+  }
   function shapePreview(item, size = "warehouse") {
     const gridSize = Math.max(4, item.width, item.height);
     const startRow = Math.floor((gridSize - item.height) / 2);
