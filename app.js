@@ -35,6 +35,7 @@
     lastEventId: null,
     performanceRunning: false,
     performanceStage: null,
+    pendingRewardChoice: null,
   };
 
   document.addEventListener("DOMContentLoaded", init);
@@ -48,6 +49,7 @@
       "warehouseHint", "searchInput", "qualityFilter", "categoryFilter", "inventoryList", "itemDetail", "exportLogButton",
       "logBody", "unlockCountInput", "applyUnlockCountButton", "undoButton", "redoButton", "detailDialog", "logDialog",
       "toolsDialog", "performanceDialog", "performanceResultScore", "performanceResultSummary", "performanceResultBreakdown", "performanceRewards", "toast",
+      "rewardChoiceDialog", "rewardChoiceList", "rewardChoiceHint", "confirmRewardChoiceButton",
       "simulationSeedInput", "simulationCountInput", "simulateButton", "simulationOutput",
       "performanceStageDialog", "stageSeed", "stageSegmentRail", "stageTitle", "stageSubtitle", "stageItem", "stageOutcome",
       "stageEventCard", "stageEventName", "stageEventDescription", "stageEventAction", "stageRhythmButton", "stageBeatMarker", "stagePerfectZone",
@@ -70,6 +72,7 @@
     els.undoButton.addEventListener("click", undo);
     els.redoButton.addEventListener("click", redo);
     els.simulateButton.addEventListener("click", runSimulationBatch);
+    els.confirmRewardChoiceButton.addEventListener("click", confirmRewardChoice);
     for (const button of document.querySelectorAll("[data-sim-count]")) {
       button.addEventListener("click", () => { els.simulationCountInput.value = button.dataset.simCount; runSimulationBatch(); });
     }
@@ -81,8 +84,12 @@
       button.addEventListener("click", () => document.getElementById(button.dataset.closeDialog)?.close());
     }
     for (const dialog of document.querySelectorAll("dialog")) {
-      dialog.addEventListener("click", (event) => { if (event.target === dialog && !(dialog === els.performanceStageDialog && state.performanceRunning)) dialog.close(); });
+      dialog.addEventListener("click", (event) => {
+        if (event.target === dialog && dialog !== els.rewardChoiceDialog && !(dialog === els.performanceStageDialog && state.performanceRunning)) dialog.close();
+      });
     }
+    els.rewardChoiceDialog.addEventListener("cancel", (event) => event.preventDefault());
+    els.performanceDialog.addEventListener("close", () => { if (state.pendingRewardChoice) showRewardChoice(); });
     document.addEventListener("keydown", handleKeyboard);
 
     state.performanceStage = new window.PerformanceStage({
@@ -153,6 +160,7 @@
     config.trial_initial_blue_count ??= 1;
     config.trial_performances_per_reward ??= 3;
     config.trial_rewards_per_performance ??= 1;
+    config.trial_reward_choice_count ??= 3;
     validateConfig(config);
     const performanceRules = {
       spotlight_segments: 3,
@@ -230,7 +238,9 @@
     state.events = events;
     state.categoryTraits = categoryTraits;
     state.performanceStage.setRules(performanceRules, categoryTraits);
-    state.configSignature = simpleHash(signature + JSON.stringify(config) + JSON.stringify([...qualities.values()]) + JSON.stringify(performanceRules) + JSON.stringify(outcomes) + JSON.stringify(events) + JSON.stringify([...categoryTraits]));
+    const signatureConfig = { ...config };
+    delete signatureConfig.trial_reward_choice_count;
+    state.configSignature = simpleHash(signature + JSON.stringify(signatureConfig) + JSON.stringify([...qualities.values()]) + JSON.stringify(performanceRules) + JSON.stringify(outcomes) + JSON.stringify(events) + JSON.stringify([...categoryTraits]));
     state.mode = "trial";
     state.history = [];
     state.future = [];
@@ -242,6 +252,7 @@
     setControlsEnabled(true);
     renderAll();
     showToast(restored ? "试玩进度已恢复" : "试玩已开始：获得1紫1蓝初始道具", "success");
+    if (state.pendingRewardChoice) setTimeout(showRewardChoice, 0);
   }
 
   function typedValue(value, type) {
@@ -261,7 +272,7 @@
     const integerKeys = [
       "backpack_rows", "backpack_cols", "initial_rows", "initial_cols", "performances_per_expand",
       "stamina_per_performance", "initial_item_level", "max_item_level", "test_initial_copies_each",
-      "trial_initial_purple_count", "trial_initial_blue_count", "trial_performances_per_reward", "trial_rewards_per_performance", "max_log_entries",
+      "trial_initial_purple_count", "trial_initial_blue_count", "trial_performances_per_reward", "trial_rewards_per_performance", "trial_reward_choice_count", "max_log_entries",
     ];
     for (const key of integerKeys) {
       if (!Number.isInteger(Number(config[key])) || Number(config[key]) < 1) throw new Error(`规则 ${key} 必须是正整数`);
@@ -284,6 +295,7 @@
     state.logs = [];
     state.runSeed = simpleHash(`${state.configSignature}:${mode}:${Date.now()}:${Math.random()}`);
     state.lastEventId = null;
+    state.pendingRewardChoice = null;
     state.performanceRunning = false;
     state.selectedInventoryId = null;
     state.selectedPlacedId = null;
@@ -360,6 +372,7 @@
       logs: state.logs.slice(0, state.config.max_log_entries),
       runSeed: state.runSeed,
       lastEventId: state.lastEventId,
+      pendingRewardChoice: state.pendingRewardChoice,
     };
     localStorage.setItem(storageKey(), JSON.stringify(payload));
   }
@@ -382,6 +395,15 @@
       state.logs = Array.isArray(payload.logs) ? payload.logs : [];
       state.runSeed = String(payload.runSeed || simpleHash(`${state.configSignature}:${mode}:${Date.now()}`));
       state.lastEventId = payload.lastEventId || null;
+      const pending = payload.pendingRewardChoice;
+      state.pendingRewardChoice = pending && Array.isArray(pending.candidateIds)
+        ? {
+            candidateIds: pending.candidateIds.filter((id) => state.items.has(id) && !state.discovered.has(id)).slice(0, state.config.trial_reward_choice_count),
+            selectedId: state.items.has(pending.selectedId) && !state.discovered.has(pending.selectedId) ? pending.selectedId : null,
+            performanceNumber: Number(pending.performanceNumber) || state.performances,
+          }
+        : null;
+      if (state.pendingRewardChoice && !state.pendingRewardChoice.candidateIds.length) state.pendingRewardChoice = null;
       state.performanceRunning = false;
       state.selectedInventoryId = null;
       state.selectedPlacedId = null;
@@ -871,7 +893,8 @@
     state.totalScore += score;
     if (state.performances % state.config.performances_per_expand === 0) state.expansionTokens += 1;
     const rewardDue = state.mode === "trial" && state.performances % state.config.trial_performances_per_reward === 0;
-    const rewards = rewardDue ? unlockTrialRewards(state.config.trial_rewards_per_performance, PerformanceSimulation.rngFromSeed(`${plan.seed}:reward`)) : [];
+    const rewardChoice = rewardDue ? createPendingRewardChoice(PerformanceSimulation.rngFromSeed(`${plan.seed}:reward`)) : null;
+    state.pendingRewardChoice = rewardChoice;
     state.lastEventId = plan.event?.id || state.lastEventId;
     const detailText = [
       ...plan.segments.map((segment, index) => `${index + 1}.${segment.itemName} ${segment.outcomeName}${segment.outcomeBonus ? ` +${segment.outcomeBonus}` : ""} / ${result.beats[index].name}${result.beats[index].bonus ? ` +${result.beats[index].bonus}` : ""}`),
@@ -891,27 +914,25 @@
       efficiency: stamina ? score / stamina : 0,
       itemCount: state.placed.length,
       unlockedCells: state.unlocked.size,
-      rewards: rewards.map((item) => item.name).join("、"),
+      rewards: rewardChoice ? "待选择" : "",
       time: new Date().toLocaleString("zh-CN", { hour12: false }),
     });
     state.logs = state.logs.slice(0, state.config.max_log_entries);
     state.history = [];
     state.future = [];
     renderAll();
-    showPerformanceResult(plan, result, stamina, rewards);
+    showPerformanceResult(plan, result, stamina, rewardChoice);
   }
 
-  function unlockTrialRewards(count, rng = Math.random) {
-    const rewards = [];
-    for (let index = 0; index < count; index += 1) {
-      const locked = [...state.items.values()].filter((item) => !state.discovered.has(item.id));
-      if (!locked.length) break;
-      const item = weightedRandomItem(locked, rng);
-      state.discovered.add(item.id);
-      state.inventory.push(makeInstance(item.id, state.config.initial_item_level));
-      rewards.push(item);
+  function createPendingRewardChoice(rng = Math.random) {
+    const pool = [...state.items.values()].filter((item) => !state.discovered.has(item.id));
+    const candidateIds = [];
+    while (pool.length && candidateIds.length < state.config.trial_reward_choice_count) {
+      const item = weightedRandomItem(pool, rng);
+      candidateIds.push(item.id);
+      pool.splice(pool.findIndex((candidate) => candidate.id === item.id), 1);
     }
-    return rewards;
+    return candidateIds.length ? { candidateIds, selectedId: null, performanceNumber: state.performances } : null;
   }
 
   function weightedRandomItem(items, rng = Math.random) {
@@ -924,7 +945,7 @@
     return items.at(-1);
   }
 
-  function showPerformanceResult(plan, result, stamina, rewards) {
+  function showPerformanceResult(plan, result, stamina, rewardChoice) {
     els.performanceResultScore.textContent = `${formatNumber(result.score)} 分`;
     els.performanceResultSummary.textContent = `消耗 ${stamina} 体力 · 当前累计效率 ${state.totalStamina ? (state.totalScore / state.totalStamina).toFixed(1) : "0.0"}`;
     els.performanceResultBreakdown.innerHTML = [
@@ -936,13 +957,66 @@
     if (state.mode === "trial") {
       const allUnlocked = state.discovered.size >= state.items.size;
       const remaining = state.config.trial_performances_per_reward - (state.performances % state.config.trial_performances_per_reward);
-      els.performanceRewards.innerHTML = rewards.length
-        ? `<p>本场解锁</p>${rewards.map((item) => `<div class="reward-item" style="--quality-color:${state.qualities.get(item.quality).color}">${shapePreview(item, "reward")}<div><strong>${escapeHtml(item.name)}</strong><span>${item.quality} · ${item.category}</span></div></div>`).join("")}`
+      els.performanceRewards.innerHTML = rewardChoice
+        ? `<p class="reward-complete">本场可从 ${rewardChoice.candidateIds.length} 件候选道具中选择 1 件</p>`
         : `<p class="reward-complete">${allUnlocked ? "60件道具已全部解锁" : `再表演 ${remaining} 次解锁新道具`}</p>`;
     } else {
       els.performanceRewards.innerHTML = '<p class="reward-complete">测试模式不改变道具库存</p>';
     }
     openDialog(els.performanceDialog);
+  }
+
+  function showRewardChoice() {
+    if (!state.pendingRewardChoice || els.performanceDialog.open) return;
+    renderRewardChoice();
+    openDialog(els.rewardChoiceDialog);
+  }
+
+  function renderRewardChoice() {
+    const pending = state.pendingRewardChoice;
+    if (!pending) return;
+    els.rewardChoiceList.innerHTML = pending.candidateIds.map((itemId) => {
+      const item = state.items.get(itemId);
+      const quality = state.qualities.get(item.quality);
+      const selected = pending.selectedId === item.id;
+      return `<button type="button" class="reward-choice-card${selected ? " selected" : ""}" data-reward-item-id="${item.id}" role="radio" aria-checked="${selected}" style="--quality-color:${quality.color}">
+        <span class="reward-choice-card-head">${shapePreview(item, "detail")}<span class="reward-choice-card-title"><strong>${escapeHtml(item.name)}</strong><span>${item.id} · ${item.quality} · ${escapeHtml(item.category)}</span></span></span>
+        <span class="reward-choice-card-facts"><span><span>系列标签</span><strong>${escapeHtml(item.tag1)} / ${escapeHtml(item.tag2)}</strong></span><span><span>占格与限制</span><strong>${item.width}×${item.height} · ${item.area}格<br>${escapeHtml(item.limitText)}</strong></span></span>
+        <span class="reward-choice-levels"><span>基础人气 Lv.1—Lv.5</span><strong>${item.base.map(formatNumber).join(" / ")}</strong></span>
+        <span class="reward-choice-levels"><span>效果值 Lv.1—Lv.5</span><strong>${item.effect.map(formatNumber).join(" / ")}</strong></span>
+        <span class="reward-choice-effect">${escapeHtml(item.effectDescription)}</span>
+      </button>`;
+    }).join("");
+    for (const card of els.rewardChoiceList.querySelectorAll("[data-reward-item-id]")) {
+      card.addEventListener("click", () => {
+        state.pendingRewardChoice.selectedId = card.dataset.rewardItemId;
+        persistState();
+        renderRewardChoice();
+      });
+    }
+    const selectedItem = pending.selectedId ? state.items.get(pending.selectedId) : null;
+    els.rewardChoiceHint.textContent = selectedItem ? `已选择：${selectedItem.name}` : "请选择 1 件道具";
+    els.confirmRewardChoiceButton.disabled = !selectedItem;
+  }
+
+  function confirmRewardChoice() {
+    const pending = state.pendingRewardChoice;
+    const item = pending?.selectedId ? state.items.get(pending.selectedId) : null;
+    if (!pending || !item) return;
+    const instance = makeInstance(item.id, state.config.initial_item_level);
+    state.discovered.add(item.id);
+    state.inventory.push(instance);
+    const spot = firstValidSpot(instance.instanceId);
+    if (spot) {
+      state.inventory.splice(state.inventory.findIndex((entry) => entry.instanceId === instance.instanceId), 1);
+      state.placed.push({ ...instance, row: spot.row, col: spot.col });
+    }
+    const rewardLog = state.logs.find((log) => log.number === pending.performanceNumber);
+    if (rewardLog) rewardLog.rewards = item.name;
+    state.pendingRewardChoice = null;
+    els.rewardChoiceDialog.close();
+    renderAll();
+    showToast(spot ? `已获得 ${item.name}，并放入背包` : `已获得 ${item.name}；当前无完整空位，已放入仓库`, "success", 5000);
   }
 
   function runSimulationBatch() {

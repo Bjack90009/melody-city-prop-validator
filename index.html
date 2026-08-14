@@ -214,6 +214,17 @@
     </div>
   </dialog>
 
+  <dialog class="modal reward-choice-dialog" id="rewardChoiceDialog">
+    <div class="modal-card reward-choice-modal-card">
+      <p class="performance-kicker">表演奖励</p>
+      <h2>选择本次获得的道具</h2>
+      <p class="reward-choice-lead">先点击一件道具查看选中状态，再点击确认。确认前不可退出此界面。</p>
+      <div class="reward-choice-list" id="rewardChoiceList" role="radiogroup" aria-label="奖励道具候选"></div>
+      <p class="reward-choice-hint" id="rewardChoiceHint">请选择 1 件道具</p>
+      <button class="button button-primary wide" id="confirmRewardChoiceButton" disabled>确认获得</button>
+    </div>
+  </dialog>
+
   <div class="toast" id="toast" role="status" aria-live="polite"></div>
 
   <script src="vendor/xlsx.full.min.js"></script>
