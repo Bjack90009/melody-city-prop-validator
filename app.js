@@ -1032,7 +1032,7 @@
       const selected = pending.selectedKey === item.id;
       return `<button type="button" class="reward-choice-card${selected ? " selected" : ""}" data-reward-key="${item.id}" role="radio" aria-checked="${selected}" style="--quality-color:${quality.color}">
         <span class="reward-choice-card-head">${itemIcon(item, "reward")}<span class="reward-choice-card-title"><strong>${escapeHtml(item.name)}</strong><span>${item.id} · ${item.quality} · ${escapeHtml(item.tag1)} / ${escapeHtml(item.tag2)}</span></span></span>
-        <span class="reward-choice-card-facts"><span><span>系列标签</span><strong>${escapeHtml(item.tag1)} / ${escapeHtml(item.tag2)}</strong></span><span><span>占格与限制</span><strong>${item.width}×${item.height} · ${item.area}格<br>${escapeHtml(item.limitText)}</strong></span></span>
+        <span class="reward-choice-card-facts"><span><span>系列标签</span><strong>${escapeHtml(item.tag1)} / ${escapeHtml(item.tag2)}</strong></span><span><span>占格与限制</span><span class="reward-choice-occupancy"><strong>${item.width}×${item.height} · ${item.area}格<br>${escapeHtml(item.limitText)}</strong>${shapePreview(item, "compact")}</span></span></span>
         <span class="reward-choice-levels"><span>基础表演值 Lv.1—Lv.5</span><strong>${item.base.map(formatNumber).join(" / ")}</strong></span>
         <span class="reward-choice-levels"><span>效果值 Lv.1—Lv.5</span><strong>${item.effect.map((_, index) => formatEffectValue(item, index + 1)).join(" / ")}</strong></span>
         <span class="reward-choice-effect">${escapeHtml(item.effectDescription)}</span>
