@@ -121,7 +121,7 @@ button { color: inherit; }
 .metric-rail {
   min-height: 72px;
   display: grid;
-  grid-template-columns: repeat(6, 1fr);
+  grid-template-columns: repeat(5, 1fr);
   border: 1px solid var(--line-strong);
   border-radius: var(--radius);
   background: rgb(10 29 42 / 0.92);
@@ -192,6 +192,16 @@ button { color: inherit; }
 }
 
 .backpack-tools { display: flex; align-items: center; gap: 8px; }
+.backpack-score-summary {
+  min-width: 82px;
+  padding-right: 10px;
+  border-right: 1px solid var(--line);
+  display: grid;
+  justify-items: center;
+  line-height: 1;
+}
+.backpack-score-summary span { color: #bdd0da; font-size: 11px; white-space: nowrap; }
+.backpack-score-summary strong { margin-top: 6px; color: var(--gold); font-family: Georgia, serif; font-size: 23px; }
 .expand-status { width: 190px; color: #d5e1e7; font-size: 12px; }
 .progress-track { height: 5px; margin-top: 7px; border: 1px solid #3b5868; background: #05111a; }
 .progress-track span { display: block; height: 100%; width: 0; background: linear-gradient(90deg, #ae7a21, #e8c15d); transition: width 180ms ease; }
