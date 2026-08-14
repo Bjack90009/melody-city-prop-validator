@@ -181,7 +181,7 @@ button { color: inherit; }
 
 .backpack-panel {
   display: grid;
-  grid-template-rows: auto minmax(0, 1fr) auto auto;
+  grid-template-rows: auto minmax(0, 1fr) auto auto auto;
 }
 
 .backpack-heading {
@@ -222,7 +222,7 @@ button { color: inherit; }
   height: var(--grid-size);
   min-width: 390px;
   min-height: 390px;
-  margin: auto;
+  margin: auto auto 0;
   padding: 24px 0 0 27px;
   position: relative;
 }
@@ -334,6 +334,36 @@ button { color: inherit; }
 
 .placement-preview.swap { border-color: var(--orange); background: rgb(226 155 61 / 0.25); }
 .placement-preview.invalid { border-color: var(--danger); background: rgb(215 88 88 / 0.22); }
+
+.backpack-primary-actions {
+  width: min(55vh, calc(100vw - 710px), 570px);
+  min-width: 390px;
+  margin: 11px auto 3px;
+  display: flex;
+  align-items: center;
+  gap: 10px;
+}
+
+.skip-performance-toggle {
+  min-height: 36px;
+  margin-left: auto;
+  padding: 7px 10px;
+  border: 1px solid #35566a;
+  border-radius: 4px;
+  display: inline-flex;
+  align-items: center;
+  gap: 7px;
+  color: #dce8ed;
+  background: #0a1d29;
+  cursor: pointer;
+  user-select: none;
+}
+
+.skip-performance-toggle:hover { border-color: #6d8795; background: #102b3c; }
+.skip-performance-toggle:has(input:checked) { border-color: #bd8a2e; color: var(--gold-soft); background: #162619; }
+.skip-performance-toggle input { width: 16px; height: 16px; margin: 0; accent-color: #d3a23e; cursor: pointer; }
+.skip-performance-toggle:has(input:disabled) { opacity: 0.45; cursor: not-allowed; }
+.backpack-perform-button { min-width: 126px; }
 
 .grid-legend {
   display: flex;
@@ -668,6 +698,7 @@ kbd { padding: 2px 6px; border: 1px solid #506b7a; border-bottom-width: 2px; bor
   .metric strong { font-size: 21px; }
   .panel-header { min-height: 58px; padding-block: 8px; }
   .grid-stage { --grid-size: min(53vh, calc(100vw - 710px), 520px); min-width: 350px; min-height: 350px; }
+  .backpack-primary-actions { width: min(53vh, calc(100vw - 710px), 520px); min-width: 350px; margin-top: 8px; }
   .grid-legend { padding-block: 5px; }
   .backpack-hint { margin-bottom: 7px; padding-top: 7px; }
   .performance-stage { height: calc(100vh - 28px); min-height: 0; }

@@ -41,7 +41,7 @@
 
   function init() {
     for (const id of [
-      "configStatus", "performButton", "unloadAllButton", "resetButton", "configFileInput",
+      "configStatus", "performButton", "unloadAllButton", "skipPerformanceCheckbox", "resetButton", "configFileInput",
       "openLogButton", "openToolsButton", "totalStamina", "totalScore", "totalEfficiency", "previewScore",
       "performanceCount", "discoveredCount", "gridSizeLabel", "backpackSummary", "expandMessage", "expandProgress",
       "gridStage", "columnLabels", "rowLabels", "backpackGrid", "backpackHint", "warehouseDropZone", "warehouseCount",
@@ -827,7 +827,9 @@
     setControlsEnabled(false);
     let interactions;
     try {
-      interactions = await state.performanceStage.play(plan);
+      interactions = els.skipPerformanceCheckbox.checked
+        ? PerformanceSimulation.autoInteractions(plan, seed)
+        : await state.performanceStage.play(plan);
     } catch (error) {
       state.performanceRunning = false;
       setControlsEnabled(true);
@@ -1227,7 +1229,7 @@
   function randomItem(items) { return items.length ? items[Math.floor(Math.random() * items.length)] : null; }
   function csvCell(value) { return `"${String(value).replaceAll('"', '""')}"`; }
   function downloadBlob(blob, filename) { const url = URL.createObjectURL(blob); const anchor = document.createElement("a"); anchor.href = url; anchor.download = filename; anchor.click(); setTimeout(() => URL.revokeObjectURL(url), 1000); }
-  function setControlsEnabled(enabled) { for (const button of [els.performButton, els.unloadAllButton, els.resetButton, els.exportLogButton, els.applyUnlockCountButton, els.simulateButton]) button.disabled = !enabled; }
+  function setControlsEnabled(enabled) { for (const control of [els.performButton, els.unloadAllButton, els.skipPerformanceCheckbox, els.resetButton, els.exportLogButton, els.applyUnlockCountButton, els.simulateButton]) control.disabled = !enabled; }
   function showToast(message, type = "", duration = 3200) { clearTimeout(state.toastTimer); els.toast.textContent = message; els.toast.className = `toast show ${type}`; state.toastTimer = setTimeout(() => { els.toast.className = "toast"; }, duration); }
   function cellKey(row, col) { return `${row},${col}`; }
   function cellKeySort(a, b) { const [ar, ac] = a.split(",").map(Number); const [br, bc] = b.split(",").map(Number); return ar - br || ac - bc; }

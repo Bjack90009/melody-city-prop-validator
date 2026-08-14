@@ -19,8 +19,6 @@
         <button class="mode-button" data-mode="test">测试模式</button>
       </div>
       <div class="header-actions">
-        <button class="button button-primary" id="performButton">开始表演</button>
-        <button class="button" id="unloadAllButton" title="快捷键 Backspace">一键卸下</button>
         <button class="button" id="openLogButton">表演日志</button>
         <button class="button button-gold" id="openToolsButton">工具与配置</button>
       </div>
@@ -59,6 +57,15 @@
           <div class="column-labels" id="columnLabels"></div>
           <div class="row-labels" id="rowLabels"></div>
           <div class="backpack-grid" id="backpackGrid" aria-label="表演道具背包"></div>
+        </div>
+
+        <div class="backpack-primary-actions">
+          <button class="button" id="unloadAllButton" title="快捷键 Backspace">一键卸下</button>
+          <label class="skip-performance-toggle" title="跳过表演过程，自动生成操作结果并直接显示结算">
+            <input id="skipPerformanceCheckbox" type="checkbox">
+            <span>跳过表现</span>
+          </label>
+          <button class="button button-primary backpack-perform-button" id="performButton">开始表演</button>
         </div>
 
         <div class="grid-legend">
