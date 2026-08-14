@@ -207,6 +207,8 @@
       if (!/^(KB|ST|WI|PC|CL|SG)\d{2}$/.test(id)) continue;
       let effectRule;
       try { effectRule = JSON.parse(String(row["效果规则JSON"])); } catch { throw new Error(`${id} 的效果规则JSON无法解析`); }
+      const serializedEffectRule = JSON.stringify(effectRule);
+      if (/"tag1"|"tag2"/.test(serializedEffectRule)) throw new Error(`${id} 的效果仍在使用标签筛选，当前版本只允许使用种类`);
       const item = {
         id,
         name: String(row["名称"]),
@@ -226,6 +228,7 @@
         effectRule,
         effectDescription: String(row["效果描述"]),
       };
+      if (item.tag1 !== item.category) throw new Error(`${id} 的标签1必须与种类一致`);
       if (!qualities.has(item.quality)) throw new Error(`${id} 使用了未定义品质：${item.quality}`);
       if (!Number.isInteger(item.width) || !Number.isInteger(item.height) || item.width < 1 || item.height < 1) throw new Error(`${id} 的宽高无效`);
       if (items.has(id)) throw new Error(`道具ID重复：${id}`);
@@ -612,7 +615,7 @@
     });
     const filtered = sorted.filter((instance) => {
       const item = state.items.get(instance.itemId);
-      return (!search || `${item.id} ${item.name} ${item.tag1} ${item.tag2}`.toLowerCase().includes(search)) && (!quality || item.quality === quality);
+      return (!search || `${item.id} ${item.name} ${item.category} ${item.tag2}`.toLowerCase().includes(search)) && (!quality || item.quality === quality);
     });
     els.warehouseCount.textContent = state.inventory.length;
     els.inventoryList.innerHTML = "";
@@ -626,7 +629,7 @@
       const row = document.createElement("div");
       row.className = "inventory-row";
       row.style.setProperty("--quality-color", qualityInfo.color);
-      row.innerHTML = `<span class="inventory-quality"></span>${itemIcon(item, "warehouse")}<div class="inventory-copy"><strong>${escapeHtml(item.name)}</strong><small>${item.id} · ${item.tag1} / ${item.tag2}</small></div><div class="inventory-meta"><b>${item.quality}</b><span class="inventory-level-shape">${shapePreview(item, "compact")}<span>Lv.${instance.level}</span></span></div>`;
+      row.innerHTML = `<span class="inventory-quality"></span>${itemIcon(item, "warehouse")}<div class="inventory-copy"><strong>${escapeHtml(item.name)}</strong><small>${item.id} · ${item.category} / ${item.tag2}</small></div><div class="inventory-meta"><b>${item.quality}</b><span class="inventory-level-shape">${shapePreview(item, "compact")}<span>Lv.${instance.level}</span></span></div>`;
       row.addEventListener("pointerdown", (event) => beginPointerGesture(event, "warehouse", instance.instanceId, row));
       els.inventoryList.appendChild(row);
     }
@@ -814,10 +817,10 @@
     els.itemDetail.innerHTML = `
       <div class="detail-hero">
         ${itemIcon(item, "detail")}
-        <div><h2 class="detail-title">${escapeHtml(item.name)}</h2><p class="detail-id">${item.id} · ${item.quality} · ${escapeHtml(item.tag1)} / ${escapeHtml(item.tag2)}</p></div>
+        <div><h2 class="detail-title">${escapeHtml(item.name)}</h2><p class="detail-id">${item.id} · ${item.quality} · ${escapeHtml(item.category)} / ${escapeHtml(item.tag2)}</p></div>
       </div>
       <div class="detail-facts">
-        <div class="detail-fact"><span>标签</span><strong>${escapeHtml(item.tag1)} / ${escapeHtml(item.tag2)}</strong></div>
+        <div class="detail-fact"><span>种类 / 风格</span><strong>${escapeHtml(item.category)} / ${escapeHtml(item.tag2)}</strong></div>
         <div class="detail-fact"><span>固定形状</span><strong class="detail-shape-value">${shapePreview(item, "detail")}<em>${item.area} 格</em></strong></div>
         <div class="detail-fact"><span>放置限制</span><strong>${escapeHtml(item.limitText)}</strong></div>
         <div class="detail-fact"><span>当前贡献</span><strong>${formatNumber(breakdown.total)}</strong></div>
@@ -1031,8 +1034,8 @@
       const quality = state.qualities.get(item.quality);
       const selected = pending.selectedKey === item.id;
       return `<button type="button" class="reward-choice-card${selected ? " selected" : ""}" data-reward-key="${item.id}" role="radio" aria-checked="${selected}" style="--quality-color:${quality.color}">
-        <span class="reward-choice-card-head">${itemIcon(item, "reward")}<span class="reward-choice-card-title"><strong>${escapeHtml(item.name)}</strong><span>${item.id} · ${item.quality} · ${escapeHtml(item.tag1)} / ${escapeHtml(item.tag2)}</span></span></span>
-        <span class="reward-choice-card-facts"><span><span>系列标签</span><strong>${escapeHtml(item.tag1)} / ${escapeHtml(item.tag2)}</strong></span><span><span>占格与限制</span><span class="reward-choice-occupancy"><strong>${item.width}×${item.height} · ${item.area}格<br>${escapeHtml(item.limitText)}</strong>${shapePreview(item, "compact")}</span></span></span>
+        <span class="reward-choice-card-head">${itemIcon(item, "reward")}<span class="reward-choice-card-title"><strong>${escapeHtml(item.name)}</strong><span>${item.id} · ${item.quality} · ${escapeHtml(item.category)} / ${escapeHtml(item.tag2)}</span></span></span>
+        <span class="reward-choice-card-facts"><span><span>种类 / 风格</span><strong>${escapeHtml(item.category)} / ${escapeHtml(item.tag2)}</strong></span><span><span>占格与限制</span><span class="reward-choice-occupancy"><strong>${item.width}×${item.height} · ${item.area}格<br>${escapeHtml(item.limitText)}</strong>${shapePreview(item, "compact")}</span></span></span>
         <span class="reward-choice-levels"><span>基础表演值 Lv.1—Lv.5</span><strong>${item.base.map(formatNumber).join(" / ")}</strong></span>
         <span class="reward-choice-levels"><span>效果值 Lv.1—Lv.5</span><strong>${item.effect.map((_, index) => formatEffectValue(item, index + 1)).join(" / ")}</strong></span>
         <span class="reward-choice-effect">${escapeHtml(item.effectDescription)}</span>
@@ -1277,8 +1280,7 @@
 
   function matchesFilter(item, filter = {}) {
     if (filter.any) return true;
-    if (filter.tag1 && !filter.tag1.includes(item.tag1)) return false;
-    if (filter.tag2 && !filter.tag2.includes(item.tag2)) return false;
+    if (filter.category && !filter.category.includes(item.category)) return false;
     if (filter.name && !filter.name.includes(item.name)) return false;
     if (filter.minArea != null && item.area < filter.minArea) return false;
     return true;
