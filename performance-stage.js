@@ -64,7 +64,7 @@
       this.renderSegments(plan, index);
       this.els.dialog.dataset.outcome = segment.outcomeId;
       this.els.title.textContent = `第 ${index + 1} 段 · 聚光时刻`;
-      this.els.subtitle.textContent = `${segment.tag1} / ${segment.tag2}`;
+      this.els.subtitle.textContent = `${segment.category} / ${segment.styleTag}`;
       this.els.item.textContent = segment.itemName;
       this.els.outcome.textContent = `${segment.outcomeName}${segment.outcomeBonus ? ` · 发挥 +${segment.outcomeBonus}` : ""}`;
       this.els.outcome.style.color = segment.outcomeColor;

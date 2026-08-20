@@ -17,6 +17,8 @@
     inventory: [],
     placed: [],
     discovered: new Set(),
+    upgradeProgress: {},
+    memorialTickets: 0,
     unlocked: new Set(),
     performances: 0,
     totalStamina: 0,
@@ -163,8 +165,10 @@
     config.trial_rewards_per_performance ??= 1;
     config.trial_reward_choice_count ??= 3;
     config.reward_unlock_option_chance ??= 0.5;
+    config.reward_owned_option_chance ??= 0.75;
     config.reward_unlock_count ??= 1;
     config.reward_highest_quality_unlock_count ??= 2;
+    config.upgrade_duplicates_per_level ??= 2;
     validateConfig(config);
     const performanceRules = {
       spotlight_segments: 3,
@@ -213,8 +217,7 @@
         id,
         name: String(row["名称"]),
         category: String(row["种类"]),
-        tag1: String(row["标签1"]),
-        tag2: String(row["标签2"]),
+        styleTag: String(row["风格标签"]),
         quality: String(row["品质"]),
         width: Number(row["宽"]),
         height: Number(row["高"]),
@@ -228,7 +231,7 @@
         effectRule,
         effectDescription: String(row["效果描述"]),
       };
-      if (item.tag1 !== item.category) throw new Error(`${id} 的标签1必须与种类一致`);
+      if (!item.category || !item.styleTag) throw new Error(`${id} 的种类或风格标签为空`);
       if (!qualities.has(item.quality)) throw new Error(`${id} 使用了未定义品质：${item.quality}`);
       if (!Number.isInteger(item.width) || !Number.isInteger(item.height) || item.width < 1 || item.height < 1) throw new Error(`${id} 的宽高无效`);
       if (items.has(id)) throw new Error(`道具ID重复：${id}`);
@@ -278,7 +281,7 @@
   function validateConfig(config) {
     const integerKeys = [
       "backpack_rows", "backpack_cols", "initial_rows", "initial_cols",
-      "stamina_per_performance", "initial_item_level", "max_item_level", "test_initial_copies_each",
+      "stamina_per_performance", "initial_item_level", "max_item_level", "upgrade_duplicates_per_level", "test_initial_copies_each",
       "trial_initial_purple_count", "trial_initial_blue_count", "trial_performances_per_reward", "trial_rewards_per_performance", "trial_reward_choice_count", "reward_unlock_count", "reward_highest_quality_unlock_count", "max_log_entries",
     ];
     for (const key of integerKeys) {
@@ -288,6 +291,7 @@
     if (config.initial_rows > config.backpack_rows || config.initial_cols > config.backpack_cols) throw new Error("初始可用区域不能超过背包尺寸");
     if (config.max_item_level > 5) throw new Error("当前道具数据只提供到Lv.5");
     if (!Number.isFinite(Number(config.reward_unlock_option_chance)) || Number(config.reward_unlock_option_chance) < 0 || Number(config.reward_unlock_option_chance) > 1) throw new Error("规则 reward_unlock_option_chance 必须为0—1之间的小数");
+    if (!Number.isFinite(Number(config.reward_owned_option_chance)) || Number(config.reward_owned_option_chance) < 0 || Number(config.reward_owned_option_chance) > 1) throw new Error("规则 reward_owned_option_chance 必须为0—1之间的小数");
   }
 
   function initializeFreshState(mode = state.mode) {
@@ -295,6 +299,8 @@
     state.inventory = [];
     state.placed = [];
     state.discovered = new Set();
+    state.upgradeProgress = {};
+    state.memorialTickets = 0;
     state.unlocked = initialUnlockedCells();
     state.performances = 0;
     state.totalStamina = 0;
@@ -372,6 +378,8 @@
       inventory: state.inventory,
       placed: state.placed,
       discovered: [...state.discovered],
+      upgradeProgress: state.upgradeProgress,
+      memorialTickets: state.memorialTickets,
       unlocked: [...state.unlocked],
       performances: state.performances,
       totalStamina: state.totalStamina,
@@ -395,6 +403,8 @@
       state.inventory = payload.inventory;
       state.placed = payload.placed;
       state.discovered = new Set(payload.discovered || [...state.items.keys()]);
+      state.upgradeProgress = Object.fromEntries(Object.entries(payload.upgradeProgress || {}).filter(([itemId, count]) => state.items.has(itemId) && Number.isInteger(Number(count)) && Number(count) >= 0));
+      state.memorialTickets = Math.max(0, Number(payload.memorialTickets) || 0);
       state.unlocked = new Set(payload.unlocked);
       state.performances = Number(payload.performances) || 0;
       state.totalStamina = Number(payload.totalStamina) || 0;
@@ -404,7 +414,7 @@
       state.runSeed = String(payload.runSeed || simpleHash(`${state.configSignature}:${mode}:${Date.now()}`));
       state.lastEventId = payload.lastEventId || null;
       const pending = payload.pendingRewardChoice;
-      const validOptions = Array.isArray(pending?.options) ? pending.options.filter((option) => option?.type === "unlock" || (option?.type === "item" && state.items.has(option.itemId) && !state.discovered.has(option.itemId))) : [];
+      const validOptions = Array.isArray(pending?.options) ? pending.options.filter((option) => option?.type === "unlock" || (option?.type === "item" && state.items.has(option.itemId))) : [];
       state.pendingRewardChoice = validOptions.length ? {
         options: validOptions.slice(0, state.config.trial_reward_choice_count),
         candidateIds: validOptions.filter((option) => option.type === "item").map((option) => option.itemId),
@@ -443,7 +453,8 @@
   function populateFilters() {
     els.qualityFilter.innerHTML = '<option value="">全部品质</option>';
     [...state.qualities.values()].sort((a, b) => b.order - a.order).forEach((quality) => els.qualityFilter.add(new Option(quality.name, quality.name)));
-    els.categoryFilter.innerHTML = '<option value="">内部种类不参与筛选</option>';
+    els.categoryFilter.innerHTML = '<option value="">全部种类</option>';
+    [...new Set([...state.items.values()].map((item) => item.category))].sort().forEach((category) => els.categoryFilter.add(new Option(category, category)));
   }
 
   function renderAll() {
@@ -608,6 +619,7 @@
   function renderInventory() {
     const search = els.searchInput.value.trim().toLowerCase();
     const quality = els.qualityFilter.value;
+    const category = els.categoryFilter.value;
     const sorted = [...state.inventory].sort((a, b) => {
       const itemA = state.items.get(a.itemId);
       const itemB = state.items.get(b.itemId);
@@ -615,7 +627,7 @@
     });
     const filtered = sorted.filter((instance) => {
       const item = state.items.get(instance.itemId);
-      return (!search || `${item.id} ${item.name} ${item.category} ${item.tag2}`.toLowerCase().includes(search)) && (!quality || item.quality === quality);
+      return (!search || `${item.id} ${item.name} ${item.category} ${item.styleTag}`.toLowerCase().includes(search)) && (!quality || item.quality === quality) && (!category || item.category === category);
     });
     els.warehouseCount.textContent = state.inventory.length;
     els.inventoryList.innerHTML = "";
@@ -629,7 +641,7 @@
       const row = document.createElement("div");
       row.className = "inventory-row";
       row.style.setProperty("--quality-color", qualityInfo.color);
-      row.innerHTML = `<span class="inventory-quality"></span>${itemIcon(item, "warehouse")}<div class="inventory-copy"><strong>${escapeHtml(item.name)}</strong><small>${item.id} · ${item.category} / ${item.tag2}</small></div><div class="inventory-meta"><b>${item.quality}</b><span class="inventory-level-shape">${shapePreview(item, "compact")}<span>Lv.${instance.level}</span></span></div>`;
+      row.innerHTML = `<span class="inventory-quality"></span>${itemIcon(item, "warehouse")}<div class="inventory-copy"><strong>${escapeHtml(item.name)}</strong><small>${item.id} · ${item.category} / ${item.styleTag}</small></div><div class="inventory-meta"><b>${item.quality}</b><span class="inventory-level-shape">${shapePreview(item, "compact")}<span>Lv.${instance.level}</span></span></div>`;
       row.addEventListener("pointerdown", (event) => beginPointerGesture(event, "warehouse", instance.instanceId, row));
       els.inventoryList.appendChild(row);
     }
@@ -817,10 +829,10 @@
     els.itemDetail.innerHTML = `
       <div class="detail-hero">
         ${itemIcon(item, "detail")}
-        <div><h2 class="detail-title">${escapeHtml(item.name)}</h2><p class="detail-id">${item.id} · ${item.quality} · ${escapeHtml(item.category)} / ${escapeHtml(item.tag2)}</p></div>
+        <div><h2 class="detail-title">${escapeHtml(item.name)}</h2><p class="detail-id">${item.id} · ${item.quality} · ${escapeHtml(item.category)} / ${escapeHtml(item.styleTag)}</p></div>
       </div>
       <div class="detail-facts">
-        <div class="detail-fact"><span>种类 / 风格</span><strong>${escapeHtml(item.category)} / ${escapeHtml(item.tag2)}</strong></div>
+        <div class="detail-fact"><span>种类 / 风格</span><strong>${escapeHtml(item.category)} / ${escapeHtml(item.styleTag)}</strong></div>
         <div class="detail-fact"><span>固定形状</span><strong class="detail-shape-value">${shapePreview(item, "detail")}<em>${item.area} 格</em></strong></div>
         <div class="detail-fact"><span>放置限制</span><strong>${escapeHtml(item.limitText)}</strong></div>
         <div class="detail-fact"><span>当前贡献</span><strong>${formatNumber(breakdown.total)}</strong></div>
@@ -955,15 +967,21 @@
   }
 
   function createPendingRewardChoice(rng = Math.random) {
-    const pool = [...state.items.values()].filter((item) => !state.discovered.has(item.id));
+    const pool = [...state.items.values()];
     const itemCount = Math.min(pool.length, state.config.trial_reward_choice_count - 1);
     const candidateIds = [];
+    const ownedPool = pool.filter((item) => state.discovered.has(item.id));
+    if (ownedPool.length && rng() < state.config.reward_owned_option_chance) {
+      const item = weightedRandomItem(ownedPool, rng);
+      candidateIds.push(item.id);
+      pool.splice(pool.findIndex((candidate) => candidate.id === item.id), 1);
+    }
     while (pool.length && candidateIds.length < itemCount) {
       const item = weightedRandomItem(pool, rng);
       candidateIds.push(item.id);
       pool.splice(pool.findIndex((candidate) => candidate.id === item.id), 1);
     }
-    if (!candidateIds.length && state.unlocked.size >= state.config.backpack_rows * state.config.backpack_cols) return null;
+    if (!candidateIds.length) return null;
     const highestOrder = Math.max(...candidateIds.map((itemId) => state.qualities.get(state.items.get(itemId).quality).order), 0);
     const globalHighestOrder = Math.max(...[...state.qualities.values()].map((quality) => quality.order));
     const unlockCount = highestOrder === globalHighestOrder ? state.config.reward_highest_quality_unlock_count : state.config.reward_unlock_count;
@@ -1001,11 +1019,10 @@
       [plan.event?.name || "现场事件", signedNumber(result.eventAdjustment)],
     ].map(([label, value]) => `<div><span>${escapeHtml(label)}</span><strong>${value}</strong></div>`).join("");
     if (state.mode === "trial") {
-      const allUnlocked = state.discovered.size >= state.items.size;
       const remaining = state.config.trial_performances_per_reward - (state.performances % state.config.trial_performances_per_reward);
       els.performanceRewards.innerHTML = rewardChoice
         ? `<p class="reward-complete">本场可从 ${rewardChoice.options.length} 个奖励中选择 1 个</p>`
-        : `<p class="reward-complete">${allUnlocked ? "60件道具已全部解锁" : `再表演 ${remaining} 次进入奖励选择`}</p>`;
+        : `<p class="reward-complete">再表演 ${remaining} 次进入奖励选择</p>`;
     } else {
       els.performanceRewards.innerHTML = '<p class="reward-complete">测试模式不改变道具库存</p>';
     }
@@ -1033,9 +1050,13 @@
       const item = state.items.get(option.itemId);
       const quality = state.qualities.get(item.quality);
       const selected = pending.selectedKey === item.id;
+      const owned = ownedInstanceForItem(item.id);
+      const progress = Number(state.upgradeProgress[item.id] || 0);
+      const ownership = !owned ? "尚未持有" : owned.level >= state.config.max_item_level ? `已达 Lv.${owned.level} · 再次获得转化为巡演纪念票` : `已持有 Lv.${owned.level} · 升级进度 ${progress}/${state.config.upgrade_duplicates_per_level}`;
       return `<button type="button" class="reward-choice-card${selected ? " selected" : ""}" data-reward-key="${item.id}" role="radio" aria-checked="${selected}" style="--quality-color:${quality.color}">
-        <span class="reward-choice-card-head">${itemIcon(item, "reward")}<span class="reward-choice-card-title"><strong>${escapeHtml(item.name)}</strong><span>${item.id} · ${item.quality} · ${escapeHtml(item.category)} / ${escapeHtml(item.tag2)}</span></span></span>
-        <span class="reward-choice-card-facts"><span><span>种类 / 风格</span><strong>${escapeHtml(item.category)} / ${escapeHtml(item.tag2)}</strong></span><span><span>占格与限制</span><span class="reward-choice-occupancy"><strong>${item.width}×${item.height} · ${item.area}格<br>${escapeHtml(item.limitText)}</strong>${shapePreview(item, "compact")}</span></span></span>
+        <span class="reward-choice-card-head">${itemIcon(item, "reward")}<span class="reward-choice-card-title"><strong>${escapeHtml(item.name)}</strong><span>${item.id} · ${item.quality} · ${escapeHtml(item.category)} / ${escapeHtml(item.styleTag)}</span></span></span>
+        <span class="reward-choice-levels"><span>持有状态</span><strong>${escapeHtml(ownership)}</strong></span>
+        <span class="reward-choice-card-facts"><span><span>种类 / 风格</span><strong>${escapeHtml(item.category)} / ${escapeHtml(item.styleTag)}</strong></span><span><span>占格与限制</span><span class="reward-choice-occupancy"><strong>${item.width}×${item.height} · ${item.area}格<br>${escapeHtml(item.limitText)}</strong>${shapePreview(item, "compact")}</span></span></span>
         <span class="reward-choice-levels"><span>基础表演值 Lv.1—Lv.5</span><strong>${item.base.map(formatNumber).join(" / ")}</strong></span>
         <span class="reward-choice-levels"><span>效果值 Lv.1—Lv.5</span><strong>${item.effect.map((_, index) => formatEffectValue(item, index + 1)).join(" / ")}</strong></span>
         <span class="reward-choice-effect">${escapeHtml(item.effectDescription)}</span>
@@ -1069,20 +1090,43 @@
       return;
     }
     const item = state.items.get(selectedOption.itemId);
-    const instance = makeInstance(item.id, state.config.initial_item_level);
-    state.discovered.add(item.id);
-    state.inventory.push(instance);
-    const spot = firstValidSpot(instance.instanceId);
-    if (spot) {
-      state.inventory.splice(state.inventory.findIndex((entry) => entry.instanceId === instance.instanceId), 1);
-      state.placed.push({ ...instance, row: spot.row, col: spot.col });
+    const owned = ownedInstanceForItem(item.id);
+    let spot = null;
+    let rewardText = item.name;
+    if (!owned) {
+      const instance = makeInstance(item.id, state.config.initial_item_level);
+      state.discovered.add(item.id);
+      state.inventory.push(instance);
+      spot = firstValidSpot(instance.instanceId);
+      if (spot) {
+        state.inventory.splice(state.inventory.findIndex((entry) => entry.instanceId === instance.instanceId), 1);
+        state.placed.push({ ...instance, row: spot.row, col: spot.col });
+      }
+      rewardText = `新道具：${item.name}`;
+    } else if (owned.level >= state.config.max_item_level) {
+      state.memorialTickets += 1;
+      rewardText = `${item.name}已满级，转化巡演纪念票×1`;
+    } else {
+      const nextProgress = Number(state.upgradeProgress[item.id] || 0) + 1;
+      if (nextProgress >= state.config.upgrade_duplicates_per_level) {
+        owned.level += 1;
+        state.upgradeProgress[item.id] = 0;
+        rewardText = `${item.name}升级至 Lv.${owned.level}`;
+      } else {
+        state.upgradeProgress[item.id] = nextProgress;
+        rewardText = `${item.name}升级进度 ${nextProgress}/${state.config.upgrade_duplicates_per_level}`;
+      }
     }
     const rewardLog = state.logs.find((log) => log.number === pending.performanceNumber);
-    if (rewardLog) rewardLog.rewards = item.name;
+    if (rewardLog) rewardLog.rewards = rewardText;
     state.pendingRewardChoice = null;
     els.rewardChoiceDialog.close();
     renderAll();
-    showToast(spot ? `已获得 ${item.name}，并放入背包` : `已获得 ${item.name}；当前无完整空位，已放入仓库`, "success", 5000);
+    showToast(!owned ? (spot ? `已获得 ${item.name}，并放入背包` : `已获得 ${item.name}；当前无完整空位，已放入仓库`) : rewardText, "success", 5000);
+  }
+
+  function ownedInstanceForItem(itemId) {
+    return state.placed.find((entry) => entry.itemId === itemId) || state.inventory.find((entry) => entry.itemId === itemId) || null;
   }
 
   function runSimulationBatch() {
